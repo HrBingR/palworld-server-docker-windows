@@ -1,243 +1,105 @@
-FROM golang:1.25.12-alpine AS rcon-cli_builder
+FROM cm2network/steamcmd:root-trixie
 
-ARG RCON_VERSION="0.10.3"
-ARG RCON_TGZ_SHA1SUM=33ee8077e66bea6ee097db4d9c923b5ed390d583
+LABEL org.opencontainers.image.source="https://github.com/HrBingR/palworld-server-docker-windows" \
+      org.opencontainers.image.description="Palworld Windows dedicated server running under Proton Experimental"
 
-WORKDIR /build
+ARG TARGETARCH=amd64
 
-# install rcon
-SHELL ["/bin/ash", "-o", "pipefail", "-c"]
-
-ENV CGO_ENABLED=0
-RUN wget -q https://github.com/gorcon/rcon-cli/archive/refs/tags/v${RCON_VERSION}.tar.gz -O rcon.tar.gz \
-    && echo "${RCON_TGZ_SHA1SUM}" rcon.tar.gz | sha1sum -c - \
-    && tar -xzvf rcon.tar.gz \
-    && rm rcon.tar.gz \
-    && mv rcon-cli-${RCON_VERSION}/* ./ \
-    && rm -rf rcon-cli-${RCON_VERSION} \
-    && go build -v ./cmd/gorcon
-
-FROM cm2network/steamcmd:root-trixie AS base-amd64
-# Ignoring --platform=arm64 as this is required for the multi-arch build to continue to work on amd64 hosts
-# hadolint ignore=DL3029
-FROM --platform=arm64 sonroyaalmerol/steamcmd-arm64:root-trixie-2026-06-07 AS base-arm64
-ARG TARGETARCH
-# Ignoring the lack of a tag here because the tag is defined in the above FROM lines
-# and hadolint isn't aware of those.
-# hadolint ignore=DL3006
-FROM base-${TARGETARCH}
-
-LABEL maintainer="thijs@loef.dev" \
-      name="thijsvanloef/palworld-server-docker" \
-      github="https://github.com/thijsvanloef/palworld-server-docker" \
-      dockerhub="https://hub.docker.com/r/thijsvanloef/palworld-server-docker" \
-      org.opencontainers.image.authors="Thijs van Loef" \
-      org.opencontainers.image.source="https://github.com/thijsvanloef/palworld-server-docker"
-
-# set envs
-# SUPERCRONIC: Latest releases available at https://github.com/aptible/supercronic/releases
-# RCON: Latest releases available at https://github.com/gorcon/rcon-cli/releases
-# DEPOT_DOWNLOADER: Latest releases available at https://github.com/SteamRE/DepotDownloader/releases
-# NOTICE: edit RCON_MD5SUM SUPERCRONIC_SHA1SUM when using binaries of another version or arch.
-ARG SUPERCRONIC_SHA1SUM_ARM64="639ab81a72771990790df7ee87d9acfe88e5fa83"
-ARG SUPERCRONIC_SHA1SUM_AMD64="5bcefed628e32adc08e32634db2d10e9230dbca0"
-ARG SUPERCRONIC_VERSION="0.2.46"
-ARG DEPOT_DOWNLOADER_VERSION="3.4.0"
-ARG KNOCK_VERSION="0.8.1"
-
-# update and install dependencies
-# hadolint ignore=DL3008
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    procps \
-    wget \
-    gettext-base \
-    xdg-user-dirs \
-    jo \
-    jq \
-    netcat-traditional \
-    unzip \
-    libcap2-bin libpcap0.8 \
-    ca-certificates \
-    python3 python3-venv python3-pip \
-    && (apt-get install -y --no-install-recommends libicu76 || apt-get install -y --no-install-recommends libicu72 || apt-get install -y --no-install-recommends libicu67) \
-    && (apt-get install -y --no-install-recommends libsdl3-0 || apt-get install -y --no-install-recommends libsdl3-0-0) \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN python3 -m venv /opt/mitmproxy-venv \
-    && /opt/mitmproxy-venv/bin/pip install --no-cache-dir mitmproxy \
-    && ln -s /opt/mitmproxy-venv/bin/mitmproxy /usr/local/bin/ \
-    && ln -s /opt/mitmproxy-venv/bin/mitmdump /usr/local/bin/ \
-    && ln -s /opt/mitmproxy-venv/bin/mitmweb /usr/local/bin/
-
-# install rcon and supercronic
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-COPY --from=rcon-cli_builder /build/gorcon /usr/bin/rcon-cli
+RUN if [[ "${TARGETARCH}" != "amd64" ]]; then \
+        echo "Milestone 1 supports amd64 only; received TARGETARCH=${TARGETARCH}" >&2; \
+        exit 1; \
+    fi
 
-ARG TARGETARCH
-RUN case "${TARGETARCH}" in \
-        "amd64") SUPERCRONIC_SHA1SUM=${SUPERCRONIC_SHA1SUM_AMD64} ;; \
-        "arm64") SUPERCRONIC_SHA1SUM=${SUPERCRONIC_SHA1SUM_ARM64} ;; \
-    esac \
-    && wget --progress=dot:giga "https://github.com/aptible/supercronic/releases/download/v${SUPERCRONIC_VERSION}/supercronic-linux-${TARGETARCH}" -O supercronic \
-    && echo "${SUPERCRONIC_SHA1SUM}" supercronic | sha1sum -c - \
-    && chmod +x supercronic \
-    && mv supercronic /usr/local/bin/supercronic
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        fontconfig \
+        gettext-base \
+        gosu \
+        jq \
+        libasound2t64 \
+        libfreetype6 \
+        libgl1 \
+        libpulse0 \
+        libvulkan1 \
+        libx11-6 \
+        libxcomposite1 \
+        libxcursor1 \
+        libxext6 \
+        libxfixes3 \
+        libxi6 \
+        libxinerama1 \
+        libxrandr2 \
+        libxrender1 \
+        mesa-vulkan-drivers \
+        procps \
+        python3 \
+        tini \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN case "${TARGETARCH}" in \
-        "amd64") DEPOT_DOWNLOADER_FILENAME=DepotDownloader-linux-x64.zip ;; \
-        "arm64") DEPOT_DOWNLOADER_FILENAME=DepotDownloader-linux-arm64.zip ;; \
-    esac \
-    && wget --progress=dot:giga "https://github.com/SteamRE/DepotDownloader/releases/download/DepotDownloader_${DEPOT_DOWNLOADER_VERSION}/${DEPOT_DOWNLOADER_FILENAME}" -O DepotDownloader.zip \
-    && unzip DepotDownloader.zip \
-    && rm -rf DepotDownloader.xml \
-    && chmod +x DepotDownloader \
-    && mv DepotDownloader /usr/local/bin/DepotDownloader
+# Proton Experimental is free-to-download Steam tool 1493710. Installing it at
+# image-build time keeps only the game server and its prefix in /palworld.
+RUN install -d -o steam -g steam /opt/proton \
+    && gosu steam /home/steam/steamcmd/steamcmd.sh \
+        +force_install_dir /opt/proton \
+        +login anonymous \
+        +app_update 1493710 validate \
+        +quit \
+    && test -x /opt/proton/proton
 
-# install patched knockd (as same as https://github.com/itzg/docker-minecraft-server/blob/master/build/ubuntu/install-packages.sh)
-RUN wget --progress=dot:giga https://github.com/Metalcape/knock/releases/download/0.8.1/knock-${KNOCK_VERSION}-${TARGETARCH}.tar.gz -O /tmp/knock.tar.gz && \
-    tar -xf /tmp/knock.tar.gz -C /usr/local/ && rm /tmp/knock.tar.gz && \
-    ln -s /usr/local/sbin/knockd /usr/sbin/knockd && \
-    setcap cap_net_raw=ep /usr/local/sbin/knockd && \
-    find /usr/lib -name 'libpcap.so.0.8' -execdir cp '{}' libpcap.so.1 \;
+# The Windows dedicated server still initializes Win32 display APIs before
+# becoming headless. Keep its virtual display local to the container.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        xauth \
+        xvfb \
+    && rm -rf /var/lib/apt/lists/*
 
-# hadolint ignore=DL3044
 ENV HOME=/home/steam \
-    PORT= \
     PUID=1000 \
     PGID=1000 \
-    PLAYERS= \
-    MULTITHREADING=false \
-    COMMUNITY=false \
-    PUBLIC_IP= \
-    PUBLIC_PORT= \
-    SERVER_PASSWORD= \
-    SERVER_NAME= \
-    ADMIN_PASSWORD= \
-    UPDATE_ON_BOOT=true \
-    RCON_ENABLED=false \
-    RCON_PORT=25575 \
+    PORT=8211 \
     QUERY_PORT=27015 \
+    PLAYERS=16 \
+    PUBLIC_PORT=8211 \
+    SERVER_NAME="Palworld Windows Server" \
+    SERVER_DESCRIPTION="" \
+    SERVER_PASSWORD="" \
+    ADMIN_PASSWORD="" \
     REST_API_ENABLED=true \
     REST_API_PORT=8212 \
-    TZ=UTC \
-    SERVER_DESCRIPTION= \
-    BACKUP_ENABLED=true \
-    DELETE_OLD_BACKUPS=false \
-    OLD_BACKUP_DAYS=30 \
-    BACKUP_CRON_EXPRESSION="0 0 * * *" \
-    AUTO_UPDATE_ENABLED=false \
-    AUTO_UPDATE_CRON_EXPRESSION="0 * * * *" \
-    AUTO_UPDATE_WARN_MINUTES=30 \
-    AUTO_REBOOT_ENABLED=false \
-    AUTO_REBOOT_WARN_MINUTES=5 \
-    AUTO_REBOOT_EVEN_IF_PLAYERS_ONLINE=false \
-    AUTO_REBOOT_CRON_EXPRESSION="0 0 * * *" \
-    AUTO_PAUSE_ENABLED=false \
-    AUTO_PAUSE_TIMEOUT_EST=180 \
-    AUTO_PAUSE_LOG=true \
-    AUTO_PAUSE_DEBUG=false \
-    DISCORD_SUPPRESS_NOTIFICATIONS= \
-    DISCORD_WEBHOOK_URL= \
-    DISCORD_CONNECT_TIMEOUT=30 \
-    DISCORD_MAX_TIMEOUT=30 \
-    DISCORD_PRE_UPDATE_BOOT_MESSAGE="Server is updating..." \
-    DISCORD_PRE_UPDATE_BOOT_MESSAGE_URL= \
-    DISCORD_PRE_UPDATE_BOOT_MESSAGE_ENABLED=true \
-    DISCORD_POST_UPDATE_BOOT_MESSAGE="Server update complete!" \
-    DISCORD_POST_UPDATE_BOOT_MESSAGE_URL= \
-    DISCORD_POST_UPDATE_BOOT_MESSAGE_ENABLED=true \
-    DISCORD_PRE_START_MESSAGE="Server has been started!" \
-    DISCORD_PRE_START_MESSAGE_URL= \
-    DISCORD_PRE_START_MESSAGE_ENABLED=true \
-    DISCORD_PRE_SHUTDOWN_MESSAGE="Server is shutting down..." \
-    DISCORD_PRE_SHUTDOWN_MESSAGE_URL= \
-    DISCORD_PRE_SHUTDOWN_MESSAGE_ENABLED=true \
-    DISCORD_POST_SHUTDOWN_MESSAGE="Server has been stopped!" \
-    DISCORD_POST_SHUTDOWN_MESSAGE_URL= \
-    DISCORD_POST_SHUTDOWN_MESSAGE_ENABLED=true \
-    DISCORD_PLAYER_JOIN_MESSAGE="player_name has joined Palworld!" \
-    DISCORD_PLAYER_JOIN_MESSAGE_URL= \
-    DISCORD_PLAYER_JOIN_MESSAGE_ENABLED=true \
-    DISCORD_PLAYER_LEAVE_MESSAGE="player_name has left Palworld." \
-    DISCORD_PLAYER_LEAVE_MESSAGE_URL= \
-    DISCORD_PLAYER_LEAVE_MESSAGE_ENABLED=true \
-    DISCORD_PRE_BACKUP_MESSAGE="Creating backup..." \
-    DISCORD_PRE_BACKUP_MESSAGE_URL= \
-    DISCORD_PRE_BACKUP_MESSAGE_ENABLED=true \
-    DISCORD_POST_BACKUP_MESSAGE="Backup created at file_path" \
-    DISCORD_POST_BACKUP_MESSAGE_URL= \
-    DISCORD_POST_BACKUP_MESSAGE_ENABLED=true \
-    DISCORD_PRE_BACKUP_DELETE_MESSAGE="Removing backups older than old_backup_days days" \
-    DISCORD_PRE_BACKUP_DELETE_MESSAGE_URL= \
-    DISCORD_PRE_BACKUP_DELETE_MESSAGE_ENABLED=true \
-    DISCORD_POST_BACKUP_DELETE_MESSAGE="Removed backups older than old_backup_days days" \
-    DISCORD_POST_BACKUP_DELETE_MESSAGE_URL= \
-    DISCORD_POST_BACKUP_DELETE_MESSAGE_ENABLED=true \
-    DISCORD_ERR_BACKUP_DELETE_MESSAGE="Unable to delete old backups, OLD_BACKUP_DAYS is not an integer. OLD_BACKUP_DAYS=old_backup_days" \
-    DISCORD_ERR_BACKUP_DELETE_MESSAGE_URL= \
-    DISCORD_ERR_BACKUP_DELETE_MESSAGE_ENABLED=true \
-    ENABLE_PLAYER_LOGGING=true \
-    PLAYER_LOGGING_POLL_PERIOD=5 \
-    ARM64_DEVICE=generic \
-    PALWORLD_ALLOW_NEGATIVE_DELTA_TIME=false \
-    DISABLE_GENERATE_ENGINE=true \
-    CROSSPLAY_PLATFORMS="(Steam,Xbox,PS5,Mac)" \
-    USE_DEPOT_DOWNLOADER=false \
-    INSTALL_BETA_INSIDER=false \
-    LOG_FILTER_ENABLED=true \
+    RCON_ENABLED=false \
+    RCON_PORT=25575 \
+    UPDATE_ON_BOOT=true \
+    MULTITHREADING=true \
     LOG_LEVEL=INFO \
-    LOG_FORMAT_TYPE=default
-
-# Sane Box64 config defaults
-# hadolint ignore=DL3044
-ENV BOX64_DYNAREC_STRONGMEM=1 \
-    BOX64_DYNAREC_BIGBLOCK=1 \
-    BOX64_DYNAREC_SAFEFLAGS=1 \
-    BOX64_DYNAREC_FASTROUND=1 \
-    BOX64_DYNAREC_FASTNAN=1 \
-    BOX64_DYNAREC_X87DOUBLE=0
-
-# Passed from Github Actions
-ARG GIT_VERSION_TAG=unspecified
-
-COPY ./scripts /home/steam/server/
-
-RUN chmod +x /home/steam/server/*.sh && \
-    mv /home/steam/server/backup.sh /usr/local/bin/backup && \
-    mv /home/steam/server/update.sh /usr/local/bin/update && \
-    mv /home/steam/server/restore.sh /usr/local/bin/restore && \
-    ln -sf /home/steam/server/rest_api.sh /usr/local/bin/rest-cli
-
-# AUTO_PAUSE
-RUN chmod +x /home/steam/server/autopause/*.sh && \
-    ln -sf /home/steam/server/autopause/autopause.sh /usr/local/bin/autopause && \
-    ln -sf /home/steam/server/autopause/knockd-ctl.sh /usr/local/sbin/knockd-ctl
-
-# AUTO_PAUSE with Community
-RUN mkdir -p /home/steam/.mitmproxy && \
-    openssl genrsa -out ca.key 2048 && \
-    openssl req -x509 -new -nodes -key ca.key -sha256 -days 3650 -out ca.crt -addext keyUsage=critical,keyCertSign -subj "/CN=rootca" && \
-    cat ca.key ca.crt > /home/steam/.mitmproxy/mitmproxy-ca.pem && \
-    rm ca.key && \
-    mv ca.crt /usr/local/share/ca-certificates/mitmproxy.crt && \
-    update-ca-certificates
+    STEAM_COMPAT_CLIENT_INSTALL_PATH=/home/steam/Steam \
+    STEAM_COMPAT_DATA_PATH=/palworld/.proton \
+    STEAM_COMPAT_APP_ID=2394010 \
+    SteamAppId=2394010 \
+    SteamGameId=2394010 \
+    WINEDEBUG=-all
 
 WORKDIR /home/steam/server
 
-# Make GIT_VERSION_TAG file to be able to check the version
-RUN echo $GIT_VERSION_TAG > GIT_VERSION_TAG
+COPY scripts/helper_functions.sh /home/steam/server/helper_functions.sh
+COPY scripts/compile-settings.sh /home/steam/server/compile-settings.sh
+COPY scripts/files/PalWorldSettings.ini.template /home/steam/server/files/PalWorldSettings.ini.template
+COPY scripts/windows-entrypoint.sh /home/steam/server/windows-entrypoint.sh
 
-RUN touch rcon.yaml crontab && \
-    mkdir -p /home/steam/Steam/package && \
-    chown steam:steam /home/steam/Steam/package && \
-    rm -rf /tmp/dumps && \
-    chmod o+w rcon.yaml crontab /home/steam/Steam/package && \
-    chown steam:steam -R /home/steam/server
+RUN chmod 0755 \
+        /home/steam/server/compile-settings.sh \
+        /home/steam/server/windows-entrypoint.sh \
+    && chown -R steam:steam /home/steam/server
 
-HEALTHCHECK --start-period=5m \
-    CMD pgrep "PalServer-Linux" > /dev/null || exit 1
+VOLUME ["/palworld"]
 
-EXPOSE ${PORT} ${RCON_PORT}
-ENTRYPOINT ["/home/steam/server/init.sh"]
+EXPOSE 8211/udp 27015/udp 8212/tcp
+
+HEALTHCHECK --start-period=5m --interval=30s --timeout=5s --retries=3 \
+    CMD pgrep -f "[P]alServer-Win64-Shipping-Cmd.exe" >/dev/null || exit 1
+
+ENTRYPOINT ["tini", "--", "/home/steam/server/windows-entrypoint.sh"]
